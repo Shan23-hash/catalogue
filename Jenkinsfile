@@ -18,14 +18,12 @@ pipeline {
     } */
     // Build
     stages {
-        stage('Build') {
+        stage('Read package.json') {
             steps {
-                script{
-                    sh """
-                        echo "Hello Build"
-                        sleep 10
-                        env
-                    """
+                script {
+                    def packageJson = readJSON file: 'package.json'
+                    def Version = packageJson.version
+                    echo "Package version: ${Version}"
                 }
             }
         }
