@@ -1,15 +1,15 @@
 pipeline {
     agent  {
         label 'AGENT-1'
-    }
+    /* }
     environment { 
-        appVersion = ''
-    }
+        COURSE = 'jenkins'
+    } */
     options {
         timeout(time: 30, unit: 'MINUTES') 
         disableConcurrentBuilds()
-    }
-    /* parameters {
+   /*  }
+    parameters {
         string(name: 'PERSON', defaultValue: 'Mr Jenkins', description: 'Who should I say hello to?')
         text(name: 'BIOGRAPHY', defaultValue: '', description: 'Enter some information about the person')
         booleanParam(name: 'TOGGLE', defaultValue: true, description: 'Toggle this value')
@@ -18,28 +18,45 @@ pipeline {
     } */
     // Build
     stages {
-        stage('Read package.json') {
+        stage('Build') {
             steps {
-                script {
-                    def packageJson = readJSON file: 'package.json'
-                    appVersion = packageJson.version
-                    echo "Package version: ${appVersion}"
+                script{
+                    sh """
+                        echo "Hello Build"
+                        sleep 10
+                        env
+                        echo "Hello ${params.PERSON}"
+                    """
                 }
             }
         }
-        stage('Install Dependencies') {
+        stage('Test') {
             steps {
-                script {
-                   sh """
-                        npm install
-                   """
+                script{
+                    echo 'Testing..'
                 }
             }
         }
-
-
+        stage('Deploy') {
+            input {
+                message "Should we continue?"
+                ok "Yes, we should."
+                submitter "alice,bob"
+                parameters {
+                    string(name: 'PERSON', defaultValue: 'Mr Jenkins', description: 'Who should I say hello to?')
+                }
+            }
+            steps {
+                script{
+                    echo "Hello, ${PERSON}, nice to meet you."
+                    
+                    echo 'Deploying..'
+                }
+            }
+        }
+        
     }
-    
+
     post { 
         always { 
             echo 'I will always say Hello again!'
