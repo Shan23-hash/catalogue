@@ -1,8 +1,8 @@
 pipeline {
     agent  {
         label 'AGENT-1'
-    /* }
-    environment { 
+    }
+    /* environment { 
         COURSE = 'jenkins'
     } */
     options {
