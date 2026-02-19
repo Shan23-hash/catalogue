@@ -25,7 +25,6 @@ pipeline {
                         echo "Hello Build"
                         sleep 10
                         env
-                        echo "Hello ${params.PERSON}"
                     """
                 }
             }
@@ -37,7 +36,8 @@ pipeline {
                 }
             }
         
-        
+       }\
+
     }
 
     post { 
@@ -52,4 +52,4 @@ pipeline {
             echo 'Hello Failure'
         }
     }
-}
+}    
