@@ -83,4 +83,3 @@ pipeline {
             echo 'Hello Failure'
         }
     }
-}
