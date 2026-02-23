@@ -90,3 +90,4 @@ pipeline {
             echo 'Hello Failure'
         }
     }
+}    
