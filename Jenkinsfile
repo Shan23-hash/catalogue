@@ -36,6 +36,15 @@ pipeline {
                 }
             }
         }
+        stage('Unit Testing') {
+            steps {
+                script {
+                   sh """
+                        echo "unit tests"
+                   """
+                }
+            }
+        }
         stage('Docker Build') {
             steps {
                 script {
@@ -49,9 +58,7 @@ pipeline {
                 }
             }
         }
-
-    }
-    stage('Trigger Deploy') {
+        stage('Trigger Deploy') {
             when{
                 expression { params.deploy }
             }
