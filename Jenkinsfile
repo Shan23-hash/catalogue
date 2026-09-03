@@ -63,7 +63,7 @@ pipeline {
         }
 
         failure {
-            echo 'Hello Failure'
+            echo 'Hello Failure' 
         }
     }
 }
