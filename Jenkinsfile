@@ -2,7 +2,8 @@ pipeline {
     agent {
         label 'AGENT-1'
     }
-    environment { 
+
+    environment {
         appVersion = ''
         REGION = "us-east-1"
         ACC_ID = "565257597039"
@@ -24,6 +25,7 @@ pipeline {
         password(name: 'PASSWORD', defaultValue: 'SECRET', description: 'Enter a password')
     }
     */
+
     stages {
         stage('Read package.json') {
             steps {
@@ -34,6 +36,7 @@ pipeline {
                 }
             }
         }
+
         stage('Docker Build') {
             steps {
                 script {
@@ -46,6 +49,7 @@ pipeline {
                     }
                 }
             }
+        }
     }
 
     post {
