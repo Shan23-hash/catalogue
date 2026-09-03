@@ -2,6 +2,9 @@ pipeline {
     agent {
         label 'AGENT-1'
     }
+    environment { 
+        appVersion = ''
+    }
 
     options {
         timeout(time: 30, unit: 'MINUTES')
@@ -17,20 +20,16 @@ pipeline {
         password(name: 'PASSWORD', defaultValue: 'SECRET', description: 'Enter a password')
     }
     */
-
     stages {
-        stage('Build') {
+        stage('Read package.json') {
             steps {
                 script {
-                    sh """
-                        echo "Hello Build"
-                        sleep 10
-                        env
-                    """
+                    def packageJson = readJSON file: 'package.json'
+                    appVersion = packageJson.version
+                    echo "Package version: ${appVersion}"
                 }
             }
         }
-
         stage('Test') {
             steps {
                 script {
