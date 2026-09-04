@@ -16,8 +16,17 @@ pipeline {
         disableConcurrentBuilds()
     }
 
-    stages {
+    /*
+    parameters {
+        string(name: 'PERSON', defaultValue: 'Mr Jenkins', description: 'Who should I say hello to?')
+        text(name: 'BIOGRAPHY', defaultValue: '', description: 'Enter some information about the person')
+        booleanParam(name: 'TOGGLE', defaultValue: true, description: 'Toggle this value')
+        choice(name: 'CHOICE', choices: ['One', 'Two', 'Three'], description: 'Pick something')
+        password(name: 'PASSWORD', defaultValue: 'SECRET', description: 'Enter a password')
+    }
+    */
 
+    stages {
         stage('Read package.json') {
             steps {
                 script {
@@ -31,20 +40,20 @@ pipeline {
         stage('Docker Build') {
             steps {
                 script {
-                    withAWS(credentials: 'aws-creds', region: "${REGION}") {
+                    withAWS(credentials: 'aws-creds', region: 'us-east-1') {
                         sh """
-                            aws ecr get-login-password --region ${REGION} | docker login --username AWS --password-stdin ${ACC_ID}.dkr.ecr.${REGION}.amazonaws.com
-
-                            docker build -t ${ACC_ID}.dkr.ecr.${REGION}.amazonaws.com/${PROJECT}/${COMPONENT}:${appVersion} .
-
-                            docker push ${ACC_ID}.dkr.ecr.${REGION}.amazonaws.com/${PROJECT}/${COMPONENT}:${appVersion}
+                            aws ecr get-login-password --region ${REGION} | docker login --username AWS --password-stdin ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com
+                            docker build -t ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${appVersion} .
+                            docker push ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${appVersion}
                         """
                     }
                 }
             }
         }
-
         stage('Trigger Deploy') {
+            when{
+                expression { params.deploy }
+            }
             steps {
                 script {
                     build job: 'catalogue-cd',
@@ -52,8 +61,8 @@ pipeline {
                         string(name: 'appVersion', value: "${appVersion}"),
                         string(name: 'deploy_to', value: 'dev')
                     ],
-                    propagate: false,
-                    wait: false
+                    propagate: false,  // even SG fails VPC will not be effected
+                    wait: false // VPC will not wait for SG pipeline completion
                 }
             }
         }
@@ -70,7 +79,7 @@ pipeline {
         }
 
         failure {
-            echo 'Hello Failure'
+            echo 'Hello Failure' 
         }
     }
 }
