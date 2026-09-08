@@ -4,7 +4,6 @@ pipeline {
     }
 
     environment {
-        APP_VERSION = ''
         REGION = 'us-east-1'
         ACC_ID = '565257597039'
         PROJECT = 'roboshop'
@@ -40,13 +39,30 @@ pipeline {
                         error "❌ package.json version is missing"
                     }
 
-                    env.APP_VERSION = version.toString().trim()
+                    // Save version into a file
+                    writeFile(
+                        file: 'app-version.txt',
+                        text: version.toString().trim()
+                    )
 
-                    echo "Jenkins APP_VERSION = [${env.APP_VERSION}]"
+                    echo "✅ APP_VERSION saved as: ${version}"
+                }
+            }
+        }
 
-                    sh '''
-                        echo "Shell APP_VERSION = [$APP_VERSION]"
-                    '''
+        stage('Verify Version') {
+            steps {
+                script {
+
+                    def appVersion = readFile('app-version.txt').trim()
+
+                    echo "======================================"
+                    echo "APP_VERSION: [${appVersion}]"
+                    echo "======================================"
+
+                    if (!appVersion || appVersion == 'null') {
+                        error "❌ Invalid APP_VERSION: [${appVersion}]"
+                    }
                 }
             }
         }
@@ -142,31 +158,50 @@ pipeline {
             steps {
                 script {
 
+                    // Read version from file
+                    def appVersion = readFile('app-version.txt').trim()
+
+                    echo "======================================"
+                    echo "Docker Build"
+                    echo "APP_VERSION: [${appVersion}]"
+                    echo "======================================"
+
+                    if (!appVersion || appVersion == 'null') {
+                        error "❌ Invalid APP_VERSION: [${appVersion}]"
+                    }
+
                     withAWS(
                         credentials: 'aws-creds',
                         region: 'us-east-1'
                     ) {
 
-                        sh '''
-                            echo "======================================"
-                            echo "Building Docker Image"
-                            echo "Version: [$APP_VERSION]"
-                            echo "======================================"
+                        sh """
+                            echo "Logging into ECR..."
 
                             aws ecr get-login-password \
-                              --region "$REGION" | \
+                              --region ${REGION} | \
                             docker login \
                               --username AWS \
                               --password-stdin \
-                              "$ACC_ID.dkr.ecr.us-east-1.amazonaws.com"
+                              ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com
+
+                            echo "Building Docker image..."
 
                             docker build \
-                              -t "$ACC_ID.dkr.ecr.us-east-1.amazonaws.com/$PROJECT/$COMPONENT:$APP_VERSION" \
+                              -t ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${appVersion} \
                               .
 
+                            echo "Pushing Docker image..."
+
                             docker push \
-                              "$ACC_ID.dkr.ecr.us-east-1.amazonaws.com/$PROJECT/$COMPONENT:$APP_VERSION"
-                        '''
+                              ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${appVersion}
+
+                            echo "======================================"
+                            echo "Docker image pushed successfully"
+                            echo "Image:"
+                            echo "${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${appVersion}"
+                            echo "======================================"
+                        """
                     }
                 }
             }
@@ -175,6 +210,18 @@ pipeline {
         stage('Check Scan Results') {
             steps {
                 script {
+
+                    // Read version from file
+                    def appVersion = readFile('app-version.txt').trim()
+
+                    echo "======================================"
+                    echo "ECR Security Scan"
+                    echo "APP_VERSION: [${appVersion}]"
+                    echo "======================================"
+
+                    if (!appVersion || appVersion == 'null') {
+                        error "❌ Invalid APP_VERSION: [${appVersion}]"
+                    }
 
                     withAWS(
                         credentials: 'aws-creds',
@@ -186,30 +233,31 @@ pipeline {
 
                         for (int i = 1; i <= 20; i++) {
 
-                            echo "Checking ECR scan... Attempt ${i}/20"
-                            echo "Image tag: ${env.APP_VERSION}"
+                            echo "Checking ECR scan..."
+                            echo "Attempt: ${i}/20"
+                            echo "Image tag: ${appVersion}"
 
                             def result = sh(
-                                script: '''
+                                script: """
                                     aws ecr describe-image-scan-findings \
-                                      --repository-name "$PROJECT/$COMPONENT" \
-                                      --image-id imageTag="$APP_VERSION" \
-                                      --region "$REGION" \
+                                      --repository-name ${PROJECT}/${COMPONENT} \
+                                      --image-id imageTag=${appVersion} \
+                                      --region ${REGION} \
                                       --output json
-                                ''',
+                                """,
                                 returnStatus: true
                             )
 
                             if (result == 0) {
 
                                 findings = sh(
-                                    script: '''
+                                    script: """
                                         aws ecr describe-image-scan-findings \
-                                          --repository-name "$PROJECT/$COMPONENT" \
-                                          --image-id imageTag="$APP_VERSION" \
-                                          --region "$REGION" \
+                                          --repository-name ${PROJECT}/${COMPONENT} \
+                                          --image-id imageTag=${appVersion} \
+                                          --region ${REGION} \
                                           --output json
-                                    ''',
+                                    """,
                                     returnStdout: true
                                 ).trim()
 
@@ -223,6 +271,9 @@ pipeline {
                                 if (status == 'COMPLETE') {
 
                                     scanComplete = true
+
+                                    echo "✅ ECR scan completed."
+
                                     break
 
                                 } else {
@@ -258,8 +309,14 @@ pipeline {
 
                             echo "❌ Found ${highCritical.size()} HIGH/CRITICAL vulnerabilities!"
 
+                            highCritical.each { finding ->
+                                echo "Severity: ${finding.severity}"
+                                echo "Name: ${finding.name}"
+                                echo "Description: ${finding.description ?: 'N/A'}"
+                            }
+
                             error(
-                                "Build failed due to vulnerabilities"
+                                "❌ Build failed due to HIGH/CRITICAL vulnerabilities"
                             )
 
                         } else {
@@ -281,28 +338,28 @@ pipeline {
             steps {
                 script {
 
+                    // Read version from file
+                    def appVersion = readFile('app-version.txt').trim()
+
                     echo "======================================"
                     echo "Triggering Catalogue CD"
-                    echo "Version: ${env.APP_VERSION}"
+                    echo "Version: ${appVersion}"
                     echo "Environment: dev"
                     echo "======================================"
 
                     build job: 'catalogue-cd',
-                    parameters: [
-
-                        string(
-                            name: 'appVersion',
-                            value: "${env.APP_VERSION}"
-                        ),
-
-                        string(
-                            name: 'deploy_to',
-                            value: 'dev'
-                        )
-                    ],
-
-                    propagate: false,
-                    wait: false
+                        parameters: [
+                            string(
+                                name: 'appVersion',
+                                value: appVersion
+                            ),
+                            string(
+                                name: 'deploy_to',
+                                value: 'dev'
+                            )
+                        ],
+                        propagate: false,
+                        wait: false
                 }
             }
         }
