@@ -29,25 +29,24 @@ pipeline {
         stage('Read package.json') {
             steps {
                 script {
-                    sh '''
-                        echo "===== package.json ====="
-                        cat package.json
-                        echo "========================"
-                    '''
 
                     def packageJson = readJSON file: 'package.json'
-                    def appVersion = packageJson.version
+                    def version = packageJson['version']
 
-                    echo "Package name: ${packageJson.name}"
-                    echo "Package version: ${appVersion}"
+                    echo "Package name: ${packageJson['name']}"
+                    echo "Package version: ${version}"
 
-                    if (!appVersion) {
+                    if (version == null || version.toString().trim() == '') {
                         error "❌ package.json version is missing"
                     }
 
-                    env.APP_VERSION = appVersion.toString()
+                    env.APP_VERSION = version.toString().trim()
 
-                    echo "APP_VERSION: ${env.APP_VERSION}"
+                    echo "Jenkins APP_VERSION = [${env.APP_VERSION}]"
+
+                    sh '''
+                        echo "Shell APP_VERSION = [$APP_VERSION]"
+                    '''
                 }
             }
         }
@@ -73,6 +72,7 @@ pipeline {
             environment {
                 scannerHome = tool 'sonar-8.1'
             }
+
             steps {
                 script {
                     withSonarQubeEnv(installationName: 'sonar-8.1') {
@@ -98,6 +98,7 @@ pipeline {
 
             steps {
                 script {
+
                     def response = sh(
                         script: '''
                             curl -s \
@@ -111,16 +112,26 @@ pipeline {
                     def json = readJSON text: response
 
                     def criticalOrHigh = json.findAll { alert ->
-                        def severity = alert?.security_advisory?.severity?.toLowerCase()
-                        def state = alert?.state?.toLowerCase()
+
+                        def severity =
+                            alert?.security_advisory?.severity?.toLowerCase()
+
+                        def state =
+                            alert?.state?.toLowerCase()
 
                         return state == 'open' &&
-                               (severity == 'critical' || severity == 'high')
+                               (severity == 'critical' ||
+                                severity == 'high')
                     }
 
                     if (criticalOrHigh.size() > 0) {
-                        error "❌ Found ${criticalOrHigh.size()} HIGH/CRITICAL Dependabot alerts. Failing pipeline!"
+
+                        error(
+                            "❌ Found ${criticalOrHigh.size()} HIGH/CRITICAL Dependabot alerts. Failing pipeline!"
+                        )
+
                     } else {
+
                         echo "✅ No HIGH/CRITICAL Dependabot alerts found."
                     }
                 }
@@ -130,27 +141,32 @@ pipeline {
         stage('Docker Build') {
             steps {
                 script {
+
                     withAWS(
                         credentials: 'aws-creds',
                         region: 'us-east-1'
                     ) {
 
-                        sh """
-                            echo "Building Docker image with version: ${env.APP_VERSION}"
+                        sh '''
+                            echo "======================================"
+                            echo "Building Docker Image"
+                            echo "Version: [$APP_VERSION]"
+                            echo "======================================"
 
                             aws ecr get-login-password \
-                              --region ${REGION} | \
+                              --region "$REGION" | \
                             docker login \
                               --username AWS \
                               --password-stdin \
-                              ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com
+                              "$ACC_ID.dkr.ecr.us-east-1.amazonaws.com"
 
                             docker build \
-                              -t ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${env.APP_VERSION} .
+                              -t "$ACC_ID.dkr.ecr.us-east-1.amazonaws.com/$PROJECT/$COMPONENT:$APP_VERSION" \
+                              .
 
                             docker push \
-                              ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${env.APP_VERSION}
-                        """
+                              "$ACC_ID.dkr.ecr.us-east-1.amazonaws.com/$PROJECT/$COMPONENT:$APP_VERSION"
+                        '''
                     }
                 }
             }
@@ -159,6 +175,7 @@ pipeline {
         stage('Check Scan Results') {
             steps {
                 script {
+
                     withAWS(
                         credentials: 'aws-creds',
                         region: 'us-east-1'
@@ -170,43 +187,51 @@ pipeline {
                         for (int i = 1; i <= 20; i++) {
 
                             echo "Checking ECR scan... Attempt ${i}/20"
+                            echo "Image tag: ${env.APP_VERSION}"
 
                             def result = sh(
-                                script: """
+                                script: '''
                                     aws ecr describe-image-scan-findings \
-                                      --repository-name ${PROJECT}/${COMPONENT} \
-                                      --image-id imageTag=${env.APP_VERSION} \
-                                      --region ${REGION} \
+                                      --repository-name "$PROJECT/$COMPONENT" \
+                                      --image-id imageTag="$APP_VERSION" \
+                                      --region "$REGION" \
                                       --output json
-                                """,
+                                ''',
                                 returnStatus: true
                             )
 
                             if (result == 0) {
 
                                 findings = sh(
-                                    script: """
+                                    script: '''
                                         aws ecr describe-image-scan-findings \
-                                          --repository-name ${PROJECT}/${COMPONENT} \
-                                          --image-id imageTag=${env.APP_VERSION} \
-                                          --region ${REGION} \
+                                          --repository-name "$PROJECT/$COMPONENT" \
+                                          --image-id imageTag="$APP_VERSION" \
+                                          --region "$REGION" \
                                           --output json
-                                    """,
+                                    ''',
                                     returnStdout: true
                                 ).trim()
 
                                 def scanJson = readJSON text: findings
 
-                                def status = scanJson.imageScanStatus?.status
+                                def status =
+                                    scanJson.imageScanStatus?.status
 
                                 echo "ECR scan status: ${status}"
 
                                 if (status == 'COMPLETE') {
+
                                     scanComplete = true
                                     break
+
+                                } else {
+
+                                    echo "⏳ ECR scan is still running..."
                                 }
 
                             } else {
+
                                 echo "⏳ ECR scan result not available yet..."
                             }
 
@@ -214,21 +239,28 @@ pipeline {
                         }
 
                         if (!scanComplete) {
-                            error "❌ ECR image scan did not complete within the expected time."
+
+                            error(
+                                "❌ ECR image scan did not complete within the expected time."
+                            )
                         }
 
                         def json = readJSON text: findings
 
-                        def highCritical = json.imageScanFindings.findAll {
-                            it.severity == 'HIGH' ||
-                            it.severity == 'CRITICAL'
-                        }
+                        def highCritical =
+                            json.imageScanFindings.findAll {
+
+                                it.severity == 'HIGH' ||
+                                it.severity == 'CRITICAL'
+                            }
 
                         if (highCritical.size() > 0) {
 
                             echo "❌ Found ${highCritical.size()} HIGH/CRITICAL vulnerabilities!"
 
-                            error("Build failed due to vulnerabilities")
+                            error(
+                                "Build failed due to vulnerabilities"
+                            )
 
                         } else {
 
@@ -249,19 +281,26 @@ pipeline {
             steps {
                 script {
 
-                    echo "Triggering catalogue-cd with version ${env.APP_VERSION}"
+                    echo "======================================"
+                    echo "Triggering Catalogue CD"
+                    echo "Version: ${env.APP_VERSION}"
+                    echo "Environment: dev"
+                    echo "======================================"
 
                     build job: 'catalogue-cd',
                     parameters: [
+
                         string(
                             name: 'appVersion',
                             value: "${env.APP_VERSION}"
                         ),
+
                         string(
                             name: 'deploy_to',
                             value: 'dev'
                         )
                     ],
+
                     propagate: false,
                     wait: false
                 }
