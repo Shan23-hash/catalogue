@@ -1,13 +1,15 @@
 pipeline {
+
     agent {
         label 'AGENT-1'
     }
 
     environment {
-        REGION = 'us-east-1'
-        ACC_ID = '565257597039'
-        PROJECT = 'roboshop'
-        COMPONENT = 'catalogue'
+        appVersion = ''
+        REGION = "us-east-1"
+        ACC_ID = "565257597039"
+        PROJECT = "roboshop"
+        COMPONENT = "catalogue"
     }
 
     options {
@@ -24,130 +26,94 @@ pipeline {
     }
 
     stages {
-
+        
         stage('Read package.json') {
             steps {
                 script {
-
                     def packageJson = readJSON file: 'package.json'
-                    def version = packageJson['version']
-
-                    echo "Package name: ${packageJson['name']}"
-                    echo "Package version: ${version}"
-
-                    if (version == null || version.toString().trim() == '') {
-                        error "❌ package.json version is missing"
-                    }
-
-                    // Save version into a file
-                    writeFile(
-                        file: 'app-version.txt',
-                        text: version.toString().trim()
-                    )
-
-                    echo "✅ APP_VERSION saved as: ${version}"
-                }
-            }
-        }
-
-        stage('Verify Version') {
-            steps {
-                script {
-
-                    def appVersion = readFile('app-version.txt').trim()
-
-                    echo "======================================"
-                    echo "APP_VERSION: [${appVersion}]"
-                    echo "======================================"
-
-                    if (!appVersion || appVersion == 'null') {
-                        error "❌ Invalid APP_VERSION: [${appVersion}]"
-                    }
+                    appVersion = packageJson.version
+                    echo "Package version: ${appVersion}"
                 }
             }
         }
 
         stage('Install Dependencies') {
             steps {
-                sh '''
-                    npm install
-                '''
+                script {
+                    sh """
+                        echo "Installing dependencies..."
+                        npm install
+                    """
+                }
             }
         }
 
         stage('Unit Testing') {
             steps {
-                sh '''
-                    echo "unit tests"
-                '''
+                script {
+                    sh """
+                        echo "unit tests"
+                    """
+                }
             }
         }
 
-        /*
-        stage('Sonar Scan') {
+        /* stage('Sonar Scan') {
             environment {
                 scannerHome = tool 'sonar-8.1'
             }
-
             steps {
                 script {
-                    withSonarQubeEnv(installationName: 'sonar-8.1') {
-                        sh "${scannerHome}/bin/sonar-scanner"
-                    }
+                   // Sonar Server envrionment
+                   withSonarQubeEnv(installationName: 'sonar-8.1') {
+                         sh "${scannerHome}/bin/sonar-scanner"
+                   }
                 }
             }
-        }
+        } */
 
-        stage('Quality Gate') {
+        // Enable webhook in sonarqube server and wait for results
+        /* stage("Quality Gate") {
             steps {
                 timeout(time: 1, unit: 'HOURS') {
-                    waitForQualityGate abortPipeline: true
-                }
+                waitForQualityGate abortPipeline: true }
             }
-        }
-        */
+        } */
 
         stage('Check Dependabot Alerts') {
             environment {
                 GITHUB_TOKEN = credentials('github-token')
             }
-
             steps {
                 script {
-
                     def response = sh(
-                        script: '''
+                        script: """
                             curl -s \
-                              -H "Accept: application/vnd.github+json" \
-                              -H "Authorization: Bearer $GITHUB_TOKEN" \
-                              https://api.github.com/repos/Shan23-hash/catalogue/dependabot/alerts
-                        ''',
+                            -H "Accept: application/vnd.github+json" \
+                            -H "Authorization: token ${GITHUB_TOKEN}" \
+                            https://api.github.com/repos/kranthikumar96/catalogue/dependabot/alerts
+                        """,
                         returnStdout: true
                     ).trim()
-
                     def json = readJSON text: response
-
                     def criticalOrHigh = json.findAll { alert ->
-
                         def severity =
                             alert?.security_advisory?.severity?.toLowerCase()
-
                         def state =
                             alert?.state?.toLowerCase()
-
-                        return state == 'open' &&
-                               (severity == 'critical' ||
-                                severity == 'high')
-                    }
-
-                    if (criticalOrHigh.size() > 0) {
-
-                        error(
-                            "❌ Found ${criticalOrHigh.size()} HIGH/CRITICAL Dependabot alerts. Failing pipeline!"
+                        return (
+                            state == "open" &&
+                            (severity == "critical" || severity == "high")
                         )
+                    }
+                    if (criticalOrHigh.size() > 0) {
+                        error """
+                        ❌ Found ${criticalOrHigh.size()}
+                        HIGH/CRITICAL Dependabot alerts.
 
+                        Pipeline stopped.
+                        """
                     } else {
-
                         echo "✅ No HIGH/CRITICAL Dependabot alerts found."
                     }
                 }
@@ -157,171 +123,124 @@ pipeline {
         stage('Docker Build') {
             steps {
                 script {
-
-                    // Read version from file
-                    def appVersion = readFile('app-version.txt').trim()
-
-                    echo "======================================"
-                    echo "Docker Build"
-                    echo "APP_VERSION: [${appVersion}]"
-                    echo "======================================"
-
-                    if (!appVersion || appVersion == 'null') {
-                        error "❌ Invalid APP_VERSION: [${appVersion}]"
-                    }
-
                     withAWS(
                         credentials: 'aws-creds',
-                        region: 'us-east-1'
+                        region: "${REGION}"
                     ) {
-
                         sh """
-                            echo "Logging into ECR..."
+                            echo "Logging into Amazon ECR..."
 
                             aws ecr get-login-password \
-                              --region ${REGION} | \
+                                --region ${REGION} | \
                             docker login \
-                              --username AWS \
-                              --password-stdin \
-                              ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com
+                                --username AWS \
+                                --password-stdin \
+                                ${ACC_ID}.dkr.ecr.${REGION}.amazonaws.com
 
                             echo "Building Docker image..."
-
-                            docker build \
-                              -t ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${appVersion} \
-                              .
-
+                            docker buildx build \
+                                --provenance=false \
+                                --load \
+                                -t ${ACC_ID}.dkr.ecr.${REGION}.amazonaws.com/${PROJECT}/${COMPONENT}:${appVersion} .
                             echo "Pushing Docker image..."
-
                             docker push \
-                              ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${appVersion}
-
-                            echo "======================================"
-                            echo "Docker image pushed successfully"
-                            echo "Image:"
-                            echo "${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${appVersion}"
-                            echo "======================================"
+                                ${ACC_ID}.dkr.ecr.${REGION}.amazonaws.com/${PROJECT}/${COMPONENT}:${appVersion}
                         """
                     }
                 }
             }
         }
 
-        stage('Check Scan Results') {
+        stage('Check ECR Scan Results') {
             steps {
                 script {
-
-                    // Read version from file
-                    def appVersion = readFile('app-version.txt').trim()
-
-                    echo "======================================"
-                    echo "ECR Security Scan"
-                    echo "APP_VERSION: [${appVersion}]"
-                    echo "======================================"
-
-                    if (!appVersion || appVersion == 'null') {
-                        error "❌ Invalid APP_VERSION: [${appVersion}]"
-                    }
-
                     withAWS(
                         credentials: 'aws-creds',
-                        region: 'us-east-1'
+                        region: "${REGION}"
                     ) {
-
-                        def findings = null
-                        def scanComplete = false
-
-                        for (int i = 1; i <= 20; i++) {
-
-                            echo "Checking ECR scan..."
-                            echo "Attempt: ${i}/20"
-                            echo "Image tag: ${appVersion}"
-
-                            def result = sh(
-                                script: """
-                                    aws ecr describe-image-scan-findings \
-                                      --repository-name ${PROJECT}/${COMPONENT} \
-                                      --image-id imageTag=${appVersion} \
-                                      --region ${REGION} \
-                                      --output json
-                                """,
-                                returnStatus: true
-                            )
-
-                            if (result == 0) {
-
-                                findings = sh(
+                        echo "Waiting for ECR scan to complete..."
+                        def scanStatus = ""
+                        timeout(time: 5, unit: 'MINUTES') {
+                            waitUntil {
+                                scanStatus = sh(
                                     script: """
                                         aws ecr describe-image-scan-findings \
-                                          --repository-name ${PROJECT}/${COMPONENT} \
-                                          --image-id imageTag=${appVersion} \
-                                          --region ${REGION} \
-                                          --output json
+                                            --repository-name ${PROJECT}/${COMPONENT} \
+                                            --image-id imageTag=${appVersion} \
+                                            --region ${REGION} \
+                                            --query 'imageScanStatus.status' \
+                                            --output text
                                     """,
                                     returnStdout: true
                                 ).trim()
-
-                                def scanJson = readJSON text: findings
-
-                                def status =
-                                    scanJson.imageScanStatus?.status
-
-                                echo "ECR scan status: ${status}"
-
-                                if (status == 'COMPLETE') {
-
-                                    scanComplete = true
-
-                                    echo "✅ ECR scan completed."
-
-                                    break
-
-                                } else {
-
-                                    echo "⏳ ECR scan is still running..."
+                                echo "ECR Scan Status: ${scanStatus}"
+                                if (scanStatus == "COMPLETE") {
+                                    return true
                                 }
-
-                            } else {
-
-                                echo "⏳ ECR scan result not available yet..."
+                                if (
+                                    scanStatus == "FAILED" ||
+                                    scanStatus == "UNSUPPORTED_IMAGE" ||
+                                    scanStatus == "FINDINGS_UNAVAILABLE"
+                                ) {
+                                    error """
+                                    ❌ ECR scan failed.
+                                    Scan Status:
+                                    ${scanStatus}
+                                    """
+                                }
+                                sleep 10
+                                return false
                             }
-
-                            sleep 15
                         }
-
-                        if (!scanComplete) {
-
-                            error(
-                                "❌ ECR image scan did not complete within the expected time."
-                            )
-                        }
-
+                        echo "✅ ECR scan completed."
+                        def findings = sh(
+                            script: """
+                                aws ecr describe-image-scan-findings \
+                                    --repository-name ${PROJECT}/${COMPONENT} \
+                                    --image-id imageTag=${appVersion} \
+                                    --region ${REGION} \
+                                    --output json
+                            """,
+                            returnStdout: true
+                        ).trim()
                         def json = readJSON text: findings
-
-                        def highCritical =
-                            json.imageScanFindings.findAll {
-
-                                it.severity == 'HIGH' ||
-                                it.severity == 'CRITICAL'
-                            }
-
-                        if (highCritical.size() > 0) {
-
-                            echo "❌ Found ${highCritical.size()} HIGH/CRITICAL vulnerabilities!"
-
-                            highCritical.each { finding ->
-                                echo "Severity: ${finding.severity}"
-                                echo "Name: ${finding.name}"
-                                echo "Description: ${finding.description ?: 'N/A'}"
-                            }
-
-                            error(
-                                "❌ Build failed due to HIGH/CRITICAL vulnerabilities"
-                            )
-
+                        def severityCounts =
+                            json.imageScanFindings.findingSeverityCounts ?: [:]
+                        def criticalCount =
+                            severityCounts.CRITICAL ?: 0
+                        def highCount =
+                            severityCounts.HIGH ?: 0
+                        def mediumCount =
+                            severityCounts.MEDIUM ?: 0
+                        def lowCount =
+                            severityCounts.LOW ?: 0
+                        echo "=========================================="
+                        echo "       ECR SECURITY QUALITY GATE"
+                        echo "=========================================="
+                        echo "Image    : ${COMPONENT}:${appVersion}"
+                        echo "CRITICAL : ${criticalCount}"
+                        echo "HIGH     : ${highCount}"
+                        echo "MEDIUM   : ${mediumCount}"
+                        echo "LOW      : ${lowCount}"
+                        echo "=========================================="
+                        if (
+                            criticalCount > 0 ||
+                            highCount > 0
+                        ) {
+                            error """
+                            ❌ ECR SECURITY QUALITY GATE FAILED
+                            Image:
+                            ${ACC_ID}.dkr.ecr.${REGION}.amazonaws.com/${PROJECT}/${COMPONENT}:${appVersion}
+                            CRITICAL: ${criticalCount}
+                            HIGH:     ${highCount}
+                            Deployment BLOCKED.
+                            """
                         } else {
-
-                            echo "✅ No HIGH/CRITICAL vulnerabilities found."
+                            echo "✅ ECR SECURITY QUALITY GATE PASSED"
+                            echo """
+                            No HIGH or CRITICAL vulnerabilities found.
+                            Deployment is allowed.
+                            """
                         }
                     }
                 }
@@ -334,48 +253,34 @@ pipeline {
                     params.deploy
                 }
             }
-
             steps {
                 script {
-
-                    // Read version from file
-                    def appVersion = readFile('app-version.txt').trim()
-
-                    echo "======================================"
-                    echo "Triggering Catalogue CD"
-                    echo "Version: ${appVersion}"
-                    echo "Environment: dev"
-                    echo "======================================"
-
                     build job: 'catalogue-cd',
-                        parameters: [
-                            string(
-                                name: 'appVersion',
-                                value: appVersion
-                            ),
-                            string(
-                                name: 'deploy_to',
-                                value: 'dev'
-                            )
-                        ],
-                        propagate: false,
-                        wait: false
+                    parameters: [
+                        string(
+                            name: 'appVersion',
+                            value: "${appVersion}"
+                        ),
+                        string(
+                            name: 'deploy_to',
+                            value: 'dev'
+                        )
+                    ],
+                    propagate: false,
+                    wait: false
                 }
             }
         }
     }
 
     post {
-
         always {
             echo 'I will always say Hello again!'
             deleteDir()
         }
-
         success {
             echo 'Hello Success'
         }
-
         failure {
             echo 'Hello Failure'
         }
