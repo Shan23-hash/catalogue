@@ -5,10 +5,10 @@ pipeline {
 
     environment {
         APP_VERSION = ''
-        REGION = "us-east-1"
-        ACC_ID = "565257597039"
-        PROJECT = "roboshop"
-        COMPONENT = "catalogue"
+        REGION = 'us-east-1'
+        ACC_ID = '565257597039'
+        PROJECT = 'roboshop'
+        COMPONENT = 'catalogue'
     }
 
     options {
@@ -27,29 +27,30 @@ pipeline {
     stages {
 
         stage('Read package.json') {
-    steps {
-        script {
-            sh '''
-                echo "===== package.json ====="
-                cat package.json
-                echo "========================"
-            '''
+            steps {
+                script {
+                    sh '''
+                        echo "===== package.json ====="
+                        cat package.json
+                        echo "========================"
+                    '''
 
-            def packageJson = readJSON file: 'package.json'
+                    def packageJson = readJSON file: 'package.json'
+                    def appVersion = packageJson.version
 
-            echo "Package name: ${packageJson.name}"
-            echo "Package version: ${packageJson.version}"
+                    echo "Package name: ${packageJson.name}"
+                    echo "Package version: ${appVersion}"
 
-            env.APP_VERSION = packageJson.version.toString()
+                    if (!appVersion) {
+                        error "❌ package.json version is missing"
+                    }
 
-            if (!env.APP_VERSION || env.APP_VERSION == 'null') {
-                error "❌ package.json version is missing"
+                    env.APP_VERSION = appVersion.toString()
+
+                    echo "APP_VERSION: ${env.APP_VERSION}"
+                }
             }
-
-            echo "APP_VERSION: ${env.APP_VERSION}"
         }
-    }
-}
 
         stage('Install Dependencies') {
             steps {
@@ -97,7 +98,6 @@ pipeline {
 
             steps {
                 script {
-
                     def response = sh(
                         script: '''
                             curl -s \
@@ -114,8 +114,8 @@ pipeline {
                         def severity = alert?.security_advisory?.severity?.toLowerCase()
                         def state = alert?.state?.toLowerCase()
 
-                        return state == "open" &&
-                               (severity == "critical" || severity == "high")
+                        return state == 'open' &&
+                               (severity == 'critical' || severity == 'high')
                     }
 
                     if (criticalOrHigh.size() > 0) {
@@ -130,13 +130,20 @@ pipeline {
         stage('Docker Build') {
             steps {
                 script {
-                    withAWS(credentials: 'aws-creds', region: 'us-east-1') {
+                    withAWS(
+                        credentials: 'aws-creds',
+                        region: 'us-east-1'
+                    ) {
 
                         sh """
-                            aws ecr get-login-password --region ${REGION} | \
+                            echo "Building Docker image with version: ${env.APP_VERSION}"
+
+                            aws ecr get-login-password \
+                              --region ${REGION} | \
                             docker login \
                               --username AWS \
-                              --password-stdin ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com
+                              --password-stdin \
+                              ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com
 
                             docker build \
                               -t ${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${env.APP_VERSION} .
@@ -152,7 +159,10 @@ pipeline {
         stage('Check Scan Results') {
             steps {
                 script {
-                    withAWS(credentials: 'aws-creds', region: 'us-east-1') {
+                    withAWS(
+                        credentials: 'aws-creds',
+                        region: 'us-east-1'
+                    ) {
 
                         def findings = null
                         def scanComplete = false
@@ -186,11 +196,12 @@ pipeline {
                                 ).trim()
 
                                 def scanJson = readJSON text: findings
+
                                 def status = scanJson.imageScanStatus?.status
 
                                 echo "ECR scan status: ${status}"
 
-                                if (status == "COMPLETE") {
+                                if (status == 'COMPLETE') {
                                     scanComplete = true
                                     break
                                 }
@@ -209,14 +220,18 @@ pipeline {
                         def json = readJSON text: findings
 
                         def highCritical = json.imageScanFindings.findAll {
-                            it.severity == "HIGH" ||
-                            it.severity == "CRITICAL"
+                            it.severity == 'HIGH' ||
+                            it.severity == 'CRITICAL'
                         }
 
                         if (highCritical.size() > 0) {
+
                             echo "❌ Found ${highCritical.size()} HIGH/CRITICAL vulnerabilities!"
+
                             error("Build failed due to vulnerabilities")
+
                         } else {
+
                             echo "✅ No HIGH/CRITICAL vulnerabilities found."
                         }
                     }
@@ -233,6 +248,9 @@ pipeline {
 
             steps {
                 script {
+
+                    echo "Triggering catalogue-cd with version ${env.APP_VERSION}"
+
                     build job: 'catalogue-cd',
                     parameters: [
                         string(
@@ -252,6 +270,7 @@ pipeline {
     }
 
     post {
+
         always {
             echo 'I will always say Hello again!'
             deleteDir()
