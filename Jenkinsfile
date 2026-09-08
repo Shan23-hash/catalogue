@@ -3,7 +3,7 @@ pipeline {
         label 'AGENT-1'
     }
     environment { 
-        APP_VERSION = ''
+        appVersion = ''
         REGION = "us-east-1"
         ACC_ID = "565257597039"
         PROJECT = "roboshop"
@@ -22,8 +22,8 @@ pipeline {
             steps {
                 script {
                     def packageJson = readJSON file: 'package.json'
-                    env.APP_VERSION = packageJson.version
-                    echo "Package version: ${env.APP_VERSION}"
+                    appVersion = packageJson.version
+                    echo "Package version: ${appVersion}"
                 }
             }
         }
