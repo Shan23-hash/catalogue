@@ -27,14 +27,29 @@ pipeline {
     stages {
 
         stage('Read package.json') {
-            steps {
-                script {
-                    def packageJson = readJSON file: 'package.json'
-                    env.APP_VERSION = packageJson.version
-                    echo "Package version: ${env.APP_VERSION}"
-                }
+    steps {
+        script {
+            sh '''
+                echo "===== package.json ====="
+                cat package.json
+                echo "========================"
+            '''
+
+            def packageJson = readJSON file: 'package.json'
+
+            echo "Package name: ${packageJson.name}"
+            echo "Package version: ${packageJson.version}"
+
+            env.APP_VERSION = packageJson.version.toString()
+
+            if (!env.APP_VERSION || env.APP_VERSION == 'null') {
+                error "❌ package.json version is missing"
             }
+
+            echo "APP_VERSION: ${env.APP_VERSION}"
         }
+    }
+}
 
         stage('Install Dependencies') {
             steps {
